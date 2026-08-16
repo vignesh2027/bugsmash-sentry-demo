@@ -40,7 +40,7 @@ func parseDSN(dsn string) (sentryOTLP, error) {
 	}
 	return sentryOTLP{
 		Endpoint:  u.Host,
-		URLPath:   fmt.Sprintf("/api/%s/otlp/v1/traces", projectID),
+		URLPath:   fmt.Sprintf("/api/%s/integration/otlp/v1/traces", projectID),
 		PublicKey: u.User.Username(),
 	}, nil
 }

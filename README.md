@@ -104,9 +104,15 @@ endpoint from the DSN:
 
 ```
 DSN   https://<key>@o<org>.ingest.<region>.sentry.io/<project>
-OTLP  https://o<org>.ingest.<region>.sentry.io/api/<project>/otlp/v1/traces
+OTLP  https://o<org>.ingest.<region>.sentry.io/api/<project>/integration/otlp/v1/traces
 auth  x-sentry-auth: sentry sentry_key=<key>
 ```
+
+The `/integration/` segment is easy to miss and the endpoint answers `404 Not
+Found` with an empty body if you leave it out, which is not the most helpful
+thing a 404 has ever done. OTLP ingestion is in open beta at the time of
+writing; span events are dropped on ingest, which is why this demo puts its
+diagnostic information in span attributes rather than events.
 
 `sentry.Init` still runs alongside it with `sentryotel.NewOtelIntegration()`, so
 any error captured through the Sentry SDK is linked to the active OTel trace.
