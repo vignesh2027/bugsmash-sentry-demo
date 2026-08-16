@@ -1,24 +1,81 @@
-# Redis ring telemetry blackout — a Sentry reproduction
+<div align="center">
 
-A minimal Go program that makes a real OpenTelemetry instrumentation bug visible
-in Sentry.
+# Redis Ring Telemetry Blackout
 
-The bug is in [opentelemetry-go-compile-instrumentation](https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation):
-the hook that instruments `redis.Ring` clients never reached any shard the
-caller configured up front, so ring clients produced **no telemetry at all**.
+**A real OpenTelemetry bug, reproduced in Sentry.**
 
-Fix: [open-telemetry/opentelemetry-go-compile-instrumentation#1098](https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation/pull/1098)
+Ring clients produced no telemetry at all. Not partial data, not wrong data: nothing.
 
-## The bug in one paragraph
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Sentry](https://img.shields.io/badge/Sentry-OTLP-362D59?logo=sentry&logoColor=white)](https://sentry.io)
+[![Fix](https://img.shields.io/badge/upstream%20PR-%231098-brightgreen)](https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation/pull/1098)
 
-`NewRing` builds a shard for every entry in `RingOptions.Addrs`, and it finishes
-doing that before the instrumentation hook ever runs. The hook registered its
-callback through `OnNewNode`, which only fires for shards created *after*
-registration. So every shard from `Addrs` — which is how a ring is normally
-built — was skipped. No error, no warning, just an empty trace.
+</div>
+
+---
+
+## The result
+
+Same program, same 3 shard ring, same 16 Redis commands, same 4.5 seconds of runtime.
+The only thing that changes is how the instrumentation hook gets attached.
+
+<table>
+<tr>
+<th width="50%">Before</th>
+<th width="50%">After</th>
+</tr>
+<tr>
+<td>
+
+```
+mode:   BUGGY
+ran:    16 commands
+
+spans produced:
+  cart-checkout (buggy) x1
+
+redis spans observed: 0
+```
+
+</td>
+<td>
+
+```
+mode:   FIXED
+ran:    16 commands
+
+spans produced:
+  redis.ping x9
+  redis.get  x6
+  redis.set  x5
+  cart-checkout (fixed) x1
+
+redis spans observed: 20
+```
+
+</td>
+</tr>
+<tr>
+<td align="center"><b>An empty waterfall.</b><br>Every command ran. Nothing watched.</td>
+<td align="center"><b>Every command traced,</b><br>tagged with the shard that served it.</td>
+</tr>
+</table>
+
+---
+
+## The bug
+
+`NewRing` builds a shard for every entry in `RingOptions.Addrs`, and it finishes doing
+that before the instrumentation hook ever runs.
+
+The hook registered its callback through `OnNewNode`, which only fires for shards
+created **after** registration. So every shard from `Addrs`, which is how a ring is
+normally built, got skipped.
+
+No error. No warning. Just an empty trace, and absence reads as health.
 
 ```go
-// before: looks correct, instruments nothing
+// before: reads as correct, instruments nothing
 func attachRingHooksBuggy(client *redis.Ring) {
 	client.OnNewNode(func(rdb *redis.Client) {
 		rdb.AddHook(newOtelRedisHook(rdb.Options().Addr))
@@ -34,9 +91,13 @@ func attachRingHooksFixed(client *redis.Ring) {
 }
 ```
 
+Upstream fix: [open-telemetry/opentelemetry-go-compile-instrumentation#1098](https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation/pull/1098)
+
+---
+
 ## Run it
 
-You need a Sentry DSN. No Redis server required — see "Why no Redis" below.
+You need a Sentry DSN. You do **not** need a Redis server.
 
 ```sh
 export SENTRY_DSN='https://<key>@o<org>.ingest.<region>.sentry.io/<project>'
@@ -45,42 +106,23 @@ go run .          # buggy hook attachment
 go run . -fixed   # fixed hook attachment
 ```
 
-Both runs execute exactly the same 16 Redis commands across a 3-shard ring.
+Then open **Explore : Traces** in Sentry and compare the two `cart-checkout`
+transactions.
 
-## What you get
+---
 
-```
-  mode:   BUGGY                        mode:   FIXED
-  ran:    16 commands                  ran:    16 commands
+## Why no Redis server is needed
 
-  spans produced:                      spans produced:
-    cart-checkout (buggy) x1             redis.ping x9
-                                         redis.get  x6
-                                         redis.set  x5
-                                         cart-checkout (fixed) x1
+Every shard points at a port nothing is listening on, on purpose.
 
-  redis spans observed: 0              redis spans observed: 20
-```
+The instrumentation hook opens its span **before** handing the command to the next hook
+in the chain, so a command that never reaches a server still produces a span. The failure
+path runs through the same instrumentation as the success path.
 
-In Sentry, the buggy run arrives as a `cart-checkout` transaction with nothing
-underneath it. The fixed run arrives with the same transaction and every command
-hanging off it, tagged with the shard that served it.
+That makes this runnable anywhere: no container, no fixture, no CI dependency. It is the
+same trick the upstream tests use.
 
-The `redis.ping` spans are the ring's own shard health checks. Those were
-invisible too, which means a ring silently losing a shard would not have shown
-up either.
-
-## Why no Redis server
-
-Every shard points at a port nothing is listening on. That is deliberate.
-
-The instrumentation hook opens its span *before* handing the command to the next
-hook in the chain, so a command that never reaches a server still produces a
-span. The failure path runs through the same instrumentation as the success
-path. That makes the demo runnable anywhere with no container, no fixture, and
-no CI dependency — and it is the same trick the upstream tests use.
-
-If you would rather see successful commands, start one on each port:
+Prefer successful commands? Start three:
 
 ```sh
 docker run -d -p 7001:6379 redis:alpine
@@ -88,31 +130,44 @@ docker run -d -p 7002:6379 redis:alpine
 docker run -d -p 7003:6379 redis:alpine
 ```
 
-## Layout
-
-| File | What it holds |
-| --- | --- |
-| `main.go` | Wires Sentry, builds the ring, runs the commands |
-| `redishook.go` | The redis hook, plus the buggy and fixed attachment functions |
-| `sentryotlp.go` | Turns a Sentry DSN into an OTLP traces endpoint |
-| `counter.go` | Counts spans locally so the result is provable without opening Sentry |
+---
 
 ## How spans reach Sentry
 
-Sentry ingests OpenTelemetry directly over OTLP. `sentryotlp.go` derives the
-endpoint from the DSN:
+Sentry ingests OpenTelemetry directly over OTLP, so the spans you see are the real
+instrumentation behaving exactly as it would in production, not a reimplementation.
 
 ```
-DSN   https://<key>@o<org>.ingest.<region>.sentry.io/<project>
-OTLP  https://o<org>.ingest.<region>.sentry.io/api/<project>/integration/otlp/v1/traces
-auth  x-sentry-auth: sentry sentry_key=<key>
+DSN    https://<key>@o<org>.ingest.<region>.sentry.io/<project>
+OTLP   https://o<org>.ingest.<region>.sentry.io/api/<project>/integration/otlp/v1/traces
+auth   x-sentry-auth: sentry sentry_key=<key>
 ```
 
-The `/integration/` segment is easy to miss and the endpoint answers `404 Not
-Found` with an empty body if you leave it out, which is not the most helpful
-thing a 404 has ever done. OTLP ingestion is in open beta at the time of
-writing; span events are dropped on ingest, which is why this demo puts its
-diagnostic information in span attributes rather than events.
+Two things worth knowing before you try this yourself:
 
-`sentry.Init` still runs alongside it with `sentryotel.NewOtelIntegration()`, so
-any error captured through the Sentry SDK is linked to the active OTel trace.
+1. That `/integration/` segment is easy to miss. Leave it out and the endpoint answers
+   `404 Not Found` with an empty body, which tells you nothing about which half of the
+   URL was wrong.
+2. OTLP ingestion is in open beta and span **events** are dropped during ingest. This
+   demo keeps its diagnostic detail in span **attributes** instead, which turned out to
+   be the better design regardless.
+
+`sentry.Init` runs alongside the exporter with `sentryotel.NewOtelIntegration()`, so any
+error captured through the Sentry SDK is linked to the active OpenTelemetry trace.
+
+> Note: `sentry-go` v0.48 removed `NewSentrySpanProcessor`. The tracer provider pattern
+> most tutorials still show will not compile. OTLP export is the current path.
+
+---
+
+## Layout
+
+| File | What it holds |
+| :--- | :--- |
+| `main.go` | Wires Sentry, builds the ring, runs the commands |
+| `redishook.go` | The Redis hook, plus the buggy and fixed attachment functions |
+| `sentryotlp.go` | Turns a Sentry DSN into an OTLP traces endpoint |
+| `counter.go` | Counts spans locally, so the result is provable without opening Sentry |
+
+The span counter exists on purpose. The evidence travels with the code, so nobody has to
+take a screenshot's word for it.
