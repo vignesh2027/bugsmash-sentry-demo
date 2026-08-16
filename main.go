@@ -97,14 +97,20 @@ func main() {
 	}
 
 	// Spread keys across shards so every shard in the ring gets traffic.
+	//
+	// Whether a command reaches a server is irrelevant to what this demo is
+	// showing: the hook opens its span before handing off to the next hook in
+	// the chain, so instrumented shards emit a span either way. That is what
+	// makes the difference visible.
+	//
+	// The errors are real though, so they get reported rather than swallowed.
+	// That gives Sentry an Issue to group and gives Seer something to analyse,
+	// and because the capture happens inside the active span, the error and the
+	// span it came from are linked rather than sitting in two separate lists.
 	keys := []string{"user:1001", "user:2002", "user:3003", "cart:1001", "cart:2002", "sku:9", "sku:14", "session:abc"}
 	for _, k := range keys {
-		// The error is deliberately ignored. Whether the command reaches a
-		// server is irrelevant: the hook opens its span before handing off to
-		// the next hook in the chain, so instrumented shards emit a span either
-		// way. That is exactly what makes the difference visible.
-		_ = ring.Get(ctx, k).Err()
-		_ = ring.Set(ctx, k, "v", time.Minute).Err()
+		captureRedisFailure(ctx, mode, "GET", k, ring.Get(ctx, k).Err())
+		captureRedisFailure(ctx, mode, "SET", k, ring.Set(ctx, k, "v", time.Minute).Err())
 	}
 
 	root.End()
