@@ -12,7 +12,8 @@ Ring clients produced no telemetry at all. Not partial data, not wrong data: not
 
 </div>
 
----
+---<img width="1459" height="640" alt="Screenshot 2026-08-16 at 4 21 03 PM" src="https://github.com/user-attachments/assets/42c8eb81-7aa4-47c5-8fa4-3a9dfad287b3" />
+
 
 ## The result
 
@@ -61,7 +62,8 @@ redis spans observed: 20
 </tr>
 </table>
 
----
+---   
+
 
 ## The bug
 
@@ -110,6 +112,21 @@ Then open **Explore : Traces** in Sentry and compare the two `cart-checkout`
 transactions.
 
 ---
+
+
+
+
+
+<img width="1678" height="825" alt="Screenshot 2026-08-16 at 3 27 47 PM" src="https://github.com/user-attachments/assets/bfe09b9d-cd49-4045-acac-e852f0cd360b" />
+
+
+
+<img width="1680" height="832" alt="Screenshot 2026-08-16 at 3 28 13 PM" src="https://github.com/user-attachments/assets/62f09ec6-e0d7-42f5-9d73-8d233f42b0a5" />
+<img width="1679" height="836" alt="Screenshot 2026-08-16 at 3 54 47 PM" src="https://github.com/user-attachments/assets/1efff1b0-ccb9-46bf-b3f5-df787855e7e9" />
+<img width="1676" height="836" alt="Screenshot 2026-08-16 at 3 55 10 PM" src="https://github.com/user-attachments/assets/bca6526e-d861-4960-8926-b746f82b84ab" />
+
+
+
 
 ## Why no Redis server is needed
 
